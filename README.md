@@ -1,1 +1,2 @@
-# FASTWAY
+FastWay Core integration/staging repository
+=====================================
