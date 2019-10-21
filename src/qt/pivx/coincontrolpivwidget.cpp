@@ -6,6 +6,7 @@
 #include "qt/pivx/forms/ui_coincontrolpivwidget.h"
 
 #include "guiutil.h"
+#include <QAction>
 
 CoinControlPivWidget::CoinControlPivWidget(QWidget *parent) :
     QDialog(parent),
