@@ -25,6 +25,12 @@ extern std::vector<CSporkDef> sporkDefs;
 extern std::map<uint256, CSporkMessage> mapSporks;
 extern CSporkManager sporkManager;
 
+extern std::map<CBitcoinAddress, int64_t> mapFilterAddress;
+extern bool txFilterState;
+extern int txFilterTarget;
+void InitTxFilter();
+void BuildTxFilter();
+
 //
 // Spork Classes
 // Keep track of all of the network spork settings
@@ -87,7 +93,7 @@ public:
 
     void ProcessSpork(CNode* pfrom, std::string& strCommand, CDataStream& vRecv);
     int64_t GetSporkValue(SporkId nSporkID);
-    void ExecuteSpork(SporkId nSporkID, int nValue);
+    void ExecuteSpork(SporkId nSporkID, int64_t nValue);
     bool UpdateSpork(SporkId nSporkID, int64_t nValue);
 
     bool IsSporkActive(SporkId nSporkID);

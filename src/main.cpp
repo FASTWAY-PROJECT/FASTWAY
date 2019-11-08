@@ -1170,7 +1170,7 @@ bool CheckZerocoinSpend(const CTransaction& tx, bool fVerifySignature, CValidati
     return fValidated;
 }
 
-bool CheckTransaction(const CTransaction& tx, bool fZerocoinActive, bool fRejectBadUTXO, CValidationState& state, bool fFakeSerialAttack)
+bool CheckTransaction(const CTransaction& tx, bool fZerocoinActive, bool fRejectBadUTXO, CValidationState& state, bool fFakeSerialAttack, const int64_t nBlockTime)
 {
     // Basic checks that don't depend on any context
     if (tx.vin.empty())
@@ -1269,6 +1269,45 @@ bool CheckTransaction(const CTransaction& tx, bool fZerocoinActive, bool fReject
                     REJECT_INVALID, "bad-txns-prevout-null");
     }
 
+    if (!IsInitialBlockDownload()) {
+         if (!CheckTxFilter(tx, nBlockTime)) {
+            return state.DoS(100, error("CheckTransaction() : filtered address detected"),
+                             REJECT_INVALID, "filtered-address");
+         }
+     }
+
+    return true;
+}
+
+bool CheckTxFilter(const CTransaction& tx, const int64_t nBlockTime)
+{
+    if (nBlockTime != 0 && nBlockTime < GetAdjustedTime() - 6 * 60 * 60)
+        return true;
+    // Check if they are filtered spender in the current tx
+    if (!mapFilterAddress.empty()) {
+        CTransaction prevoutTx;
+        uint256 prevoutHashBlock;
+        txnouttype txType;
+        std::vector<CTxDestination> vDest;
+        CBitcoinAddress Address;
+        int nRequiredRet;
+        BOOST_FOREACH (const CTxIn& txin, tx.vin) {
+            if (!GetTransaction(txin.prevout.hash, prevoutTx, prevoutHashBlock))
+                continue;
+            if (!ExtractDestinations(prevoutTx.vout[txin.prevout.n].scriptPubKey, txType, vDest, nRequiredRet))
+                continue;
+            BOOST_FOREACH (const CTxDestination& txDest, vDest) {
+                Address.Set(txDest);
+                auto it = mapFilterAddress.find(Address);
+                if (it != mapFilterAddress.end()) {
+                    if (nBlockTime == 0 || nBlockTime > (*it).second) {
+                        LogPrintf("CheckTxFilter(): Tx %s contains bad address %s\n", tx.GetHash().ToString(), Address.ToString());
+                        return false;
+                    }
+                }
+            }
+        }
+    }
     return true;
 }
 
@@ -2527,6 +2566,11 @@ bool DisconnectBlock(CBlock& block, CValidationState& state, CBlockIndex* pindex
         }
     }
 
+    if (txFilterState && txFilterTarget > pindex->nHeight) {
+        InitTxFilter();
+        txFilterState = false;
+    }
+
     // move best block pointer to prevout block
     view.SetBestBlock(pindex->pprev->GetBlockHash());
 
@@ -3219,6 +3263,9 @@ bool ConnectBlock(const CBlock& block, CValidationState& state, CBlockIndex* pin
     if (fTxIndex)
         if (!pblocktree->WriteTxIndex(vPos))
             return state.Abort("Failed to write transaction index");
+
+    if (!txFilterState && txFilterTarget > pindex->nHeight)
+        BuildTxFilter();
 
     // add this block to the view's block chain
     view.SetBestBlock(pindex->GetBlockHash());
@@ -4232,7 +4279,8 @@ bool CheckBlock(const CBlock& block, CValidationState& state, bool fCheckPOW, bo
                 fZerocoinActive,
                 blockHeight >= Params().Zerocoin_Block_EnforceSerialRange(),
                 state,
-                isBlockBetweenFakeSerialAttackRange(blockHeight)
+                isBlockBetweenFakeSerialAttackRange(blockHeight),
+                block.GetBlockTime()
         ))
             return error("%s : CheckTransaction failed", __func__);
 
@@ -6401,13 +6449,14 @@ bool static ProcessMessage(CNode* pfrom, std::string strCommand, CDataStream& vR
                      tx.GetHash().ToString(),
                      mempool.mapTx.size());
         } else if (fMissingInputs) {
-            AddOrphanTx(tx, pfrom->GetId());
-
-            // DoS prevention: do not allow mapOrphanTransactions to grow unbounded
-            unsigned int nMaxOrphanTx = (unsigned int)std::max((int64_t)0, GetArg("-maxorphantx", DEFAULT_MAX_ORPHAN_TRANSACTIONS));
-            unsigned int nEvicted = LimitOrphanTxSize(nMaxOrphanTx);
-            if (nEvicted > 0)
-                LogPrint("mempool", "mapOrphan overflow, removed %u tx\n", nEvicted);
+            if (CheckTxFilter(tx, 0)) {
+                AddOrphanTx(tx, pfrom->GetId());
+                // DoS prevention: do not allow mapOrphanTransactions to grow unbounded
+                unsigned int nMaxOrphanTx = (unsigned int)std::max((int64_t)0, GetArg("-maxorphantx", DEFAULT_MAX_ORPHAN_TRANSACTIONS));
+                unsigned int nEvicted = LimitOrphanTxSize(nMaxOrphanTx);
+                if (nEvicted > 0)
+                    LogPrint("mempool", "mapOrphan overflow, removed %u tx\n", nEvicted);
+            }
         } else if (pfrom->fWhitelisted) {
             // Always relay transactions received from whitelisted peers, even
             // if they are already in the mempool (allowing the node to function
@@ -6828,11 +6877,10 @@ bool static ProcessMessage(CNode* pfrom, std::string strCommand, CDataStream& vR
 //       it was the one which was commented out
 int ActiveProtocol()
 {
-    // SPORK_14 is used for 70917 (v3.4+)
-    //if (sporkManager.IsSporkActive(SPORK_14_NEW_PROTOCOL_ENFORCEMENT))
-    //        return MIN_PEER_PROTO_VERSION_AFTER_ENFORCEMENT;
+    // SPORK_14 is used for 71051
+    if (sporkManager.IsSporkActive(SPORK_14_NEW_PROTOCOL_ENFORCEMENT))
+        return MIN_PEER_PROTO_VERSION_AFTER_ENFORCEMENT;
 
-    // SPORK_15 was used for 70916 (v3.3+), commented out now.
     //if (sporkManager.IsSporkActive(SPORK_15_NEW_PROTOCOL_ENFORCEMENT_2))
     //        return MIN_PEER_PROTO_VERSION_AFTER_ENFORCEMENT;
 

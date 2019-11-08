@@ -1489,7 +1489,7 @@ bool AppInit2()
                         }
                     }
                 }
-
+/*
                 // Wrapped serials inflation check
                 bool reindexDueWrappedSerials = false;
                 bool reindexZerocoin = false;
@@ -1555,7 +1555,7 @@ bool AppInit2()
                         }
                     }
                 }
-
+*/
                 if (!fReindex) {
                     uiInterface.InitMessage(_("Verifying blocks..."));
 
@@ -1948,6 +1948,7 @@ bool AppInit2()
     }
 
     // ********************************************************* Step 11: start node
+    InitTxFilter();
 
     if (!CheckDiskSpace())
         return false;
